@@ -26,6 +26,7 @@
 #include "led_driver.h"
 #include "ICM426xx.h"
 #include "time.h"
+#include "app.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
@@ -50,7 +51,7 @@
 /* Private variables ---------------------------------------------------------*/
 
 /* USER CODE BEGIN PV */
-volatile uint32_t last_motion_ms = 0;
+
 
 /* USER CODE END PV */
 
@@ -98,87 +99,44 @@ int main(void)
   MX_RTC_Init();
   MX_SPI1_Init();
   MX_TIM2_Init();
+  MX_TIM6_Init();
+  MX_TIM7_Init();
   /* USER CODE BEGIN 2 */
   Led_Init();
   Display_Clear();
   Led_SetGlobalBrightness(32); // 0..16
 
-
   HAL_TIM_Base_Start_IT(&htim2);
   HAL_TIM_OC_Start_IT(&htim2, TIM_CHANNEL_1);
-  draw_byte_center(0xFF, 64);
-  HAL_Delay(100);
+
+  HAL_TIM_Base_Start_IT(&htim6); // physics
+  HAL_TIM_Base_Start_IT(&htim7); // drawing
+
+
+  // draw_byte_center(0xFF, 64);
+  // HAL_Delay(100);
   ICM426xx_init();
+  // HAL_Delay(100);
+  // draw_byte_center(ICM426xx_get_device_id(), 64);
+  // /* USER CODE END 2 */
   HAL_Delay(100);
-  draw_byte_center(ICM426xx_get_device_id(), 64);
-  /* USER CODE END 2 */
-  HAL_Delay(100);
-  draw_byte_center(ICM426xx_interruptStatus(), 64);
-  HAL_Delay(100);
-  draw_byte_center(ICM426xx_interruptStatus(), 64);
-  HAL_Delay(100);
+  // draw_byte_center(ICM426xx_interruptStatus(), 64);
+  // HAL_Delay(100);
+  // draw_byte_center(ICM426xx_interruptStatus(), 64);
+  // HAL_Delay(100);
 
-  Display_Clear();
-  Time_Init();
-  uint8_t hh, mm, ss;
-  Time_Get(&hh, &mm, &ss);
-  Led_CurtainReveal(300, hh, mm, ss);
+  // Display_Clear();
 
-  last_motion_ms = HAL_GetTick();
-  uint32_t last_tick = HAL_GetTick();
+  App_Init();
+  
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-      uint32_t now = HAL_GetTick();
-
-    if ((now - last_tick) >= 1000) {
-        last_tick = now;
-
-        uint8_t hh, mm, ss;
-        Time_Get(&hh, &mm, &ss);
-        Led_DrawClock(hh, mm, ss);
-    }
-      if ((now - last_motion_ms) > 10000) {
-          go_to_sleep();
-          last_motion_ms = HAL_GetTick();
-      }
+    App_Loop();
   }
   /* USER CODE END 3 */
-}
-
-void go_to_sleep(void)
-{
-  uint8_t hh, mm, ss;
-  Time_Get(&hh, &mm, &ss);
-
-  // Animate closing curtains before sleep
-  Led_CurtainClose(300, hh, mm, ss);
-
-  HAL_Delay(10);
-  __HAL_GPIO_EXTI_CLEAR_IT(ACC_INT_Pin);
-
-  HAL_SuspendTick();
-  HAL_PWREx_EnterSTOP2Mode(PWR_STOPENTRY_WFI);
-
-  HAL_ResumeTick();
-  SystemClock_Config();
-  last_motion_ms = HAL_GetTick();
-
-  // Animate opening curtains when waking
-  Time_Get(&hh, &mm, &ss);
-  Led_CurtainReveal(300, hh, mm, ss);
-}
-void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
-{
-    if (GPIO_Pin == ACC_INT_Pin) {
-        // Clear WOM/SMD interrupt in sensor
-        ICM426xx_interruptStatus();
-        
-        // Record motion event time
-        last_motion_ms = HAL_GetTick();
-    }
 }
 
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
@@ -186,6 +144,18 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
   if (htim->Instance == TIM2) {
     Led_ScanSlotStart();  // start of 1 ms slot: select & drive next LED
   }
+
+  if (htim->Instance == TIM6) {
+        // physics @ ~60 Hz
+        // ICM426xx_loop();
+        // ICM426xx_Sample sample = ICM426xx_value();
+        // fluid_update(sample.ax, sample.ay, 16);
+    }
+
+    if (htim->Instance == TIM7) {
+        // drawing @ ~100 Hz
+        // fluid_draw(NULL);
+    }
 }
 
 void HAL_TIM_OC_DelayElapsedCallback(TIM_HandleTypeDef *htim)
@@ -231,6 +201,9 @@ void SystemClock_Config(void)
   {
     Error_Handler();
   }
+
+  __HAL_RCC_RTC_CONFIG(RCC_RTCCLKSOURCE_LSE);
+  __HAL_RCC_RTC_ENABLE();
 
   /** Initializes the CPU, AHB and APB buses clocks
   */

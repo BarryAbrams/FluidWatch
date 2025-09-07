@@ -1,228 +1,155 @@
+#include "main.h"
+#include "spi.h"
+#include <string.h>
+#include <math.h>
 #include "ICM426xx.h"
 
-/* Static Functions */
-static void     cs_high();
-static void     cs_low();
-
-static void     select_user_bank(userbank ub);
-
-static uint8_t  read_single_ICM426xx_reg(userbank ub, uint8_t reg);
-static void     write_single_ICM426xx_reg(userbank ub, uint8_t reg, uint8_t val);
-static uint8_t* read_multiple_ICM426xx_reg(userbank ub, uint8_t reg, uint8_t len);
-static void     write_multiple_ICM426xx_reg(userbank ub, uint8_t reg, uint8_t* val, uint8_t len);
 
 
-#define ICM426XX_WHOAMI_EXPECTED   0x5C
-#define ICM426XX_RESET_DELAY_MS    100
-#define ICM426XX_RESET_RETRIES     10
+static void cs_low(void);
+static void cs_high(void);
 
-void ICM426xx_hard_reset(void)
+static void write_single_ICM426xx_reg(uint8_t reg, uint8_t val)
 {
-    // Reset via DEVICE_CONFIG (safer soft reset)
-    write_single_ICM426xx_reg(0, B0_DEVICE_CONFIG, 0x01); // SOFT_RESET
-    HAL_Delay(10);
-
-    // Ensure Bank 0
-    write_single_ICM426xx_reg(0, B0_REG_BANK_SEL, 0x00);
-
-    // Configure interface clock + wakeup
-    write_single_ICM426xx_reg(0, B0_INTF_CONFIG1, 0x01);
-    write_single_ICM426xx_reg(0, B0_PWR_MGMT0, 0x06);
-
-    HAL_Delay(100);
-
-    // Verify identity
-    uint8_t whoami = read_single_ICM426xx_reg(0, B0_WHO_AM_I);
-    if (whoami != ICM426XX_WHOAMI_EXPECTED) {
-        // Handle error
-    }
+    uint8_t tx[2] = { WRITE | reg, val };
+    cs_low();
+    HAL_SPI_Transmit(ICM426xx_SPI, tx, 2, HAL_MAX_DELAY);
+    cs_high();
 }
 
-/* Main Functions */
+static uint8_t read_single_ICM426xx_reg(uint8_t reg)
+{
+    uint8_t tx = READ | reg;
+    uint8_t rx = 0;
+    cs_low();
+    HAL_SPI_Transmit(ICM426xx_SPI, &tx, 1, HAL_MAX_DELAY);
+    HAL_SPI_Receive(ICM426xx_SPI, &rx, 1, HAL_MAX_DELAY);
+    cs_high();
+    return rx;
+}
+
+static void read_multi(uint8_t reg, uint8_t *buf, uint16_t len)
+{
+    uint8_t tx = READ | reg;
+    cs_low();
+    HAL_SPI_Transmit(ICM426xx_SPI, &tx, 1, HAL_MAX_DELAY);
+    HAL_SPI_Receive(ICM426xx_SPI, buf, len, HAL_MAX_DELAY);
+    cs_high();
+}
+
+// ---- Bank switching ----
+static void set_bank(uint8_t bank)
+{
+    write_single_ICM426xx_reg(0x76, bank); // REG_BANK_SEL
+}
+
+static void cs_low(void)  { HAL_GPIO_WritePin(ICM426xx_SPI_CS_PIN_PORT, ICM426xx_SPI_CS_PIN_NUMBER, GPIO_PIN_RESET); }
+static void cs_high(void) { HAL_GPIO_WritePin(ICM426xx_SPI_CS_PIN_PORT, ICM426xx_SPI_CS_PIN_NUMBER, GPIO_PIN_SET); }
+
+
+// ---- Initialization ----
 void ICM426xx_init(void)
 {
     // Reset + bank select
-    write_single_ICM426xx_reg(0, B0_DEVICE_CONFIG, 0x01);
+    write_single_ICM426xx_reg(B0_DEVICE_CONFIG, 0x01);
     HAL_Delay(10);
-    write_single_ICM426xx_reg(0, B0_REG_BANK_SEL, 0x00);
+    write_single_ICM426xx_reg(B0_REG_BANK_SEL, 0x00);
 
     // Power accel + gyro
-    write_single_ICM426xx_reg(0, B0_PWR_MGMT0, 0x06);
-    write_single_ICM426xx_reg(0, B0_ACCEL_CONFIG0, 0x09); // accel ODR=50 Hz, ±2g
-	write_single_ICM426xx_reg(0, B0_INT_CONFIG, 0x00); 
-	write_single_ICM426xx_reg(0, B0_INT_CONFIG0, 0x00);
-	write_single_ICM426xx_reg(0, B0_INT_CONFIG1, 0x00);
+    write_single_ICM426xx_reg(B0_PWR_MGMT0, 0x0A);
+    write_single_ICM426xx_reg(B0_ACCEL_CONFIG0, 0x09); // accel ODR=50 Hz, ±2g
+    write_single_ICM426xx_reg(B0_GYRO_CONFIG0, 0x09); // gyro ODR=50 Hz, ±250 dps
 
-	write_single_ICM426xx_reg(0, B0_INT_SOURCE0, 0x00);
-	write_single_ICM426xx_reg(0, B0_INT_SOURCE1, 0x0F);
-	write_single_ICM426xx_reg(0, B0_INT_SOURCE2, 0x00);
-	write_single_ICM426xx_reg(0, B0_INT_SOURCE3, 0x00);
+    // INT1: active high, push-pull, pulsed
+    // bit2 = 0 (pulsed)
+    // bit1 = 1 (push-pull)
+    // bit0 = 1 (active high)
+    write_single_ICM426xx_reg(B0_INT_CONFIG, 0x03);
 
-	write_single_ICM426xx_reg(0, B0_SMD_CONFIG, 0x0A);
+    write_single_ICM426xx_reg(B0_INT_CONFIG0, 0x00);
+    write_single_ICM426xx_reg(B0_INT_CONFIG1, 0x00);
+
+    // Enable WOM interrupt routing
+    write_single_ICM426xx_reg(B0_INT_SOURCE0, 0x00);
+    write_single_ICM426xx_reg(B0_INT_SOURCE1, 0x0F);
+    write_single_ICM426xx_reg(B0_INT_SOURCE2, 0x00);
+    write_single_ICM426xx_reg(B0_INT_SOURCE3, 0x00);
+
+    // WOM config: differential mode, accel enabled
+	write_single_ICM426xx_reg(B0_SMD_CONFIG, 0x0B);  
     HAL_Delay(10);
 
-	write_single_ICM426xx_reg(0, B0_REG_BANK_SEL, 0x04);
-	write_single_ICM426xx_reg(4, 0x4A, 0x30);
-	write_single_ICM426xx_reg(4, 0x4B, 0x30);
-	write_single_ICM426xx_reg(4, 0x4C, 0x30);
+    // Switch to Bank 4 for WOM thresholds
+    write_single_ICM426xx_reg(B0_REG_BANK_SEL, 0x04);
+    write_single_ICM426xx_reg(0x4A, 0xFF);
+    write_single_ICM426xx_reg(0x4B, 0x30);
+    write_single_ICM426xx_reg(0x4C, 0xFF);
     HAL_Delay(10);
 
-	// Back to Bank 0
-	write_single_ICM426xx_reg(0, B0_REG_BANK_SEL, 0x00);
+    // Back to Bank 0
+    write_single_ICM426xx_reg(B0_REG_BANK_SEL, 0x00);
 
     HAL_Delay(50);
 }
 
-void ICM426xx_setInterrupt(void) {
-	// Interrupt functionality is configured via the Interrupt Configuration register. Items that are configurable include the interrupt pins
-	// configuration, the interrupt latching and clearing method, and triggers for the interrupt. Items that can trigger an interrupt are (1)
-	// Clock generator locked to new reference oscillator (used when switching clock sources); (2) new data is available to be read (from
-	// the FIFO and Data registers); (3) accelerometer event interrupts; (4) FIFO watermark; (5) FIFO overflow. The interrupt status can be
-	// read from the Interrupt Status register. */
 
-
-
+float ICM426xx_testReturn(void) {
+    int16_t ax_raw = (read_single_ICM426xx_reg(B0_ACCEL_DATA_X1_UI) << 8) |
+                     read_single_ICM426xx_reg(B0_ACCEL_DATA_X0_UI);
+    return (float)ax_raw / accel_lsb_per_g;
 }
+
+
+static ICM426xx_Sample sample;
 
 uint8_t ICM426xx_interruptStatus(void)
 {
-	// get the interrupt status
-	uint8_t status = read_single_ICM426xx_reg(ub_0, B0_INT_STATUS);
-	return status;	
+    // INT_STATUS (Bank 0, 0x2D) holds WOM / SMD / FIFO / Data Ready flags
+    uint8_t status = read_single_ICM426xx_reg(B0_INT_STATUS);
+
+    // Reading INT_STATUS clears the latched interrupt
+    return status;
 }
 
-/* Sub Functions */
-bool ICM426xx_who_am_i()
+
+// ---- Main loop: read + parse one packet ----
+void ICM426xx_loop(void) {
+    uint8_t buf[12];
+
+    // Burst read accel + gyro: 0x1F = ACCEL_DATA_X1_UI
+    // Register map:
+    // 0x1F: ACCEL_X1, 0x20: ACCEL_X0
+    // 0x21: ACCEL_Y1, 0x22: ACCEL_Y0
+    // 0x23: ACCEL_Z1, 0x24: ACCEL_Z0
+    // 0x25: GYRO_X1,  0x26: GYRO_X0
+    // 0x27: GYRO_Y1,  0x28: GYRO_Y0
+    // 0x29: GYRO_Z1,  0x2A: GYRO_Z0
+    read_multi(0x1F, buf, 12);
+
+    int16_t ax = (int16_t)((buf[0] << 8) | buf[1]);
+    int16_t ay = (int16_t)((buf[2] << 8) | buf[3]);
+    int16_t az = (int16_t)((buf[4] << 8) | buf[5]);
+
+    int16_t gx = (int16_t)((buf[6] << 8) | buf[7]);
+    int16_t gy = (int16_t)((buf[8] << 8) | buf[9]);
+    int16_t gz = (int16_t)((buf[10] << 8) | buf[11]);
+
+    // Convert to float using sensitivity constants
+    sample.ax = (float)ax / accel_lsb_per_g;       // ±2g → 16384 LSB/g
+    sample.ay = (float)ay / accel_lsb_per_g;
+    sample.az = (float)az / accel_lsb_per_g;
+
+    sample.gx = (float)gx / gyro_lsb_per_dps;      // ±250 dps → 131 LSB/dps
+    sample.gy = (float)gy / gyro_lsb_per_dps;
+    sample.gz = (float)gz / gyro_lsb_per_dps;
+
+    // No timestamp in this mode, so just use system tick
+    sample.ts = HAL_GetTick();
+}
+
+// ---- Accessor ----
+ICM426xx_Sample ICM426xx_value(void)
 {
-	uint8_t ICM426xx_id = read_single_ICM426xx_reg(ub_0, B0_WHO_AM_I);
-
-	if(ICM426xx_id == ICM426xx_ID)
-		return true;
-	else
-		return false;
+	
+    return sample;
 }
-
-uint8_t ICM426xx_get_device_id()
-{
-	return read_single_ICM426xx_reg(ub_0, B0_WHO_AM_I);
-}
-
-void ICM426xx_device_reset()
-{
-	write_single_ICM426xx_reg(ub_0, B0_DEVICE_CONFIG, 0x80 | 0x01);
-	HAL_Delay(100);
-}
-
-void ICM426xx_wakeup()
-{
-	uint8_t new_val = read_single_ICM426xx_reg(ub_0, B0_PWR_MGMT0);
-	new_val &= 0xBF;
-
-	write_single_ICM426xx_reg(ub_0, B0_PWR_MGMT0, new_val);
-	HAL_Delay(100);
-}
-
-void ICM426xx_sleep()
-{
-	uint8_t new_val = read_single_ICM426xx_reg(ub_0, B0_PWR_MGMT0);
-	new_val |= 0x40;
-
-	write_single_ICM426xx_reg(ub_0, B0_PWR_MGMT0, new_val);
-	HAL_Delay(100);
-}
-
-void ICM426xx_spi_slave_enable()
-{
-	uint8_t new_val = read_single_ICM426xx_reg(ub_0, B0_INTF_CONFIG0);
-	new_val |= 0x10;
-
-	write_single_ICM426xx_reg(ub_0, B0_INTF_CONFIG0, new_val);
-}
-
-void ICM426xx_clock_source(uint8_t source)
-{
-	uint8_t new_val = read_single_ICM426xx_reg(ub_0, B0_PWR_MGMT0);
-	new_val |= source;
-
-	write_single_ICM426xx_reg(ub_0, B0_PWR_MGMT0, new_val);
-}
-
-uint8_t ICM426xx_read_status(void)
-{
-    return read_single_ICM426xx_reg(ub_0, B0_INT_STATUS3);
-}
-
-/* Static Functions */
-static void cs_high()
-{
-	HAL_GPIO_WritePin(ICM426xx_SPI_CS_PIN_PORT, ICM426xx_SPI_CS_PIN_NUMBER, SET);	
-}
-
-static void cs_low()
-{
-	HAL_GPIO_WritePin(ICM426xx_SPI_CS_PIN_PORT, ICM426xx_SPI_CS_PIN_NUMBER, RESET);
-}
-
-static void select_user_bank(userbank ub)
-{
-	uint8_t write_reg[2];
-	write_reg[0] = WRITE | B0_REG_BANK_SEL;
-	write_reg[1] = ub;
-
-	cs_low();
-	HAL_SPI_Transmit(ICM426xx_SPI, write_reg, 2, 10);
-	cs_high();
-}
-
-static uint8_t read_single_ICM426xx_reg(userbank ub, uint8_t reg)
-{
-	uint8_t read_reg = READ | reg;
-	uint8_t reg_val;
-	select_user_bank(ub);
-
-	cs_low();
-	HAL_SPI_Transmit(ICM426xx_SPI, &read_reg, 1, 1000);
-	HAL_SPI_Receive(ICM426xx_SPI, &reg_val, 1, 1000);
-	cs_high();
-
-	return reg_val;
-}
-
-static void write_single_ICM426xx_reg(userbank ub, uint8_t reg, uint8_t val)
-{
-	uint8_t write_reg[2];
-	write_reg[0] = WRITE | reg;
-	write_reg[1] = val;
-
-	select_user_bank(ub);
-
-	cs_low();
-	HAL_SPI_Transmit(ICM426xx_SPI, write_reg, 2, 1000);
-	cs_high();
-}
-
-static uint8_t* read_multiple_ICM426xx_reg(userbank ub, uint8_t reg, uint8_t len)
-{
-	uint8_t read_reg = READ | reg;
-	static uint8_t reg_val[6];
-	select_user_bank(ub);
-
-	cs_low();
-	HAL_SPI_Transmit(ICM426xx_SPI, &read_reg, 1, 1000);
-	HAL_SPI_Receive(ICM426xx_SPI, reg_val, len, 1000);
-	cs_high();
-
-	return reg_val;
-}
-
-static void write_multiple_ICM426xx_reg(userbank ub, uint8_t reg, uint8_t* val, uint8_t len)
-{
-	uint8_t write_reg = WRITE | reg;
-	select_user_bank(ub);
-
-	cs_low();
-	HAL_SPI_Transmit(ICM426xx_SPI, &write_reg, 1, 1000);
-	HAL_SPI_Transmit(ICM426xx_SPI, val, len, 1000);
-	cs_high();
-}
-

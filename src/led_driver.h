@@ -109,5 +109,19 @@ static const uint8_t HEX_3x5[16][HEX_H] = {
   /*F*/ {0b111,0b100,0b111,0b100,0b100},
 };
 
+static const uint8_t TINY_4x3[10][4] = {
+    {0b111, 0b101, 0b101, 0b111}, // 0
+    {0b010, 0b110, 0b010, 0b111}, // 1
+    {0b110, 0b001, 0b010, 0b111}, // 2
+    {0b111, 0b011, 0b001, 0b111}, // 3
+    {0b101, 0b101, 0b111, 0b001}, // 4
+    {0b111, 0b100, 0b011, 0b111}, // 5
+    {0b100, 0b111, 0b101, 0b111}, // 6
+    {0b111, 0b001, 0b010, 0b100}, // 7
+    {0b111, 0b101, 0b010, 0b111}, // 8
+    {0b111, 0b101, 0b111, 0b001}, // 9
+};
+
 
 void draw_hex_byte(uint8_t r0, uint8_t c0, uint8_t byte, uint8_t level);
+void Led_CurtainReveal(uint16_t duration_ms, uint8_t hh, uint8_t mm, uint8_t ss);

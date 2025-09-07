@@ -13,18 +13,28 @@
 #include "spi.h"			// header from stm32cubemx code generate
 #include <stdbool.h>
 
-
 /* User Configuration */
 #define ICM426xx_SPI					(&hspi1)
 
 #define ICM426xx_SPI_CS_PIN_PORT		GPIOA
 #define ICM426xx_SPI_CS_PIN_NUMBER		GPIO_PIN_4
 
+// ---- Struct to hold parsed values ----
+typedef struct {
+    float ax, ay, az;   // accel in g
+    float gx, gy, gz;   // gyro in dps
+    uint32_t ts;        // timestamp (20-bit, in sample ticks)
+} ICM426xx_Sample;
 
-/* Defines */
-#define READ							0x80
-#define WRITE							0x00
+ICM426xx_Sample ICM426xx_value(void);
+void ICM426xx_loop(void);
+// ---- Scaling factors (depends on FSR) ----
+static const  float accel_lsb_per_g = 16384.0f; // for ±2g
+static const  float gyro_lsb_per_dps = 131.0f;  // for ±250 dps
 
+// ---- SPI helpers ----
+#define READ  0x80
+#define WRITE 0x00
 
 /* Typedefs */
 typedef enum
@@ -90,15 +100,9 @@ uint8_t ICM426xx_interruptStatus(void);
 bool ICM426xx_who_am_i();
 uint8_t ICM426xx_get_device_id();
 
-void ICM426xx_device_reset();
 
-void ICM426xx_wakeup();
-void ICM426xx_sleep();
 
-void ICM426xx_spi_slave_enable();
 
-void ICM426xx_clock_source(uint8_t source);
-void ICM426xx_odr_align_enable();
 
 #define ICM426xx_ID 0x5C
 

@@ -12,7 +12,7 @@
 
 #define TIME_LEVEL  255
 #define TIME_H      (HEX_H)
-#define ROW0        ((ROWS - TIME_H) / 2)   // vertically centered
+#define ROW0        ((ROWS - TIME_H) / 2) -1  // vertically centered
 #define COL_LEFT    ((COLS - (HEX_W*4 + 3)) / 2) // horizontally centered
 
 #define COL_D0      (COL_LEFT + 0)
@@ -173,6 +173,7 @@ void Led_CurtainReveal(uint16_t duration_ms, uint8_t hh, uint8_t mm, uint8_t ss)
     // Final state = just the clock
     Display_Clear();
     Led_DrawClock(hh, mm, ss);
+    App_SetLastTick();
 }
 
 void Led_CurtainClose(uint16_t duration_ms, uint8_t hh, uint8_t mm, uint8_t ss)
@@ -246,6 +247,18 @@ static void Led_DrawDigit3x5(uint8_t r0, uint8_t c0, int d, uint8_t level)
   }
 }
 
+static void Led_DrawDigit4x3(uint8_t r0, uint8_t c0, int d, uint8_t level) {
+    if (d < 0 || d > 9) return;
+    for (uint8_t ry = 0; ry < 4; ++ry) {
+        uint8_t row = TINY_4x3[d][ry];
+        for (uint8_t rx = 0; rx < 3; ++rx) {
+            if ((row >> (2 - rx)) & 1u) {
+                Display_SetPixelRC(r0 + ry, c0 + rx, level);
+            }
+        }
+    }
+}
+
 static void Led_DrawColon(uint8_t r0, uint8_t c, bool on, uint8_t level)
 {
   uint8_t rr1 = r0 + 1, rr2 = r0 + 3;
@@ -269,6 +282,7 @@ void Led_AllOn(uint8_t level)
 
 void Led_DrawClock(uint8_t hh, uint8_t mm, uint8_t ss)
 {
+    Display_Clear();
     // Convert to 12h format
     uint8_t h = hh % 12;
     if (h == 0) h = 12;
@@ -297,6 +311,16 @@ void Led_DrawClock(uint8_t hh, uint8_t mm, uint8_t ss)
     Led_DrawDigit3x5(ROW0, COL_D2 + shift, m10, TIME_LEVEL);
     Led_DrawDigit3x5(ROW0, COL_D3 + shift, m1 , TIME_LEVEL);
     Led_DrawColon(ROW0, COL_COLON + shift, colon_on, TIME_LEVEL);
+
+    // Draw seconds below HH:MM
+    uint8_t s10 = ss / 10;
+    uint8_t s1  = ss % 10;
+
+    uint8_t sec_row = ROW0 + HEX_H + 1; // just below main digits
+    uint8_t sec_col = (COLS - (3*2 + 1)) / 2; // center 2 tiny digits
+
+    Led_DrawDigit3x5(sec_row, sec_col, s10, TIME_LEVEL);
+    Led_DrawDigit3x5(sec_row, sec_col + 4, s1, TIME_LEVEL);
 }
 
 
@@ -436,6 +460,7 @@ void Display_Clear(void)
 
 void Display_SetPixelRC(uint8_t r, uint8_t c, uint8_t level)
 {
+  if (r < 0 || c < 0) return;
   if (r >= ROWS || c >= COLS) return;
   uint16_t idx = (uint16_t)r * COLS + c;
 
@@ -448,6 +473,10 @@ void Display_SetPixelRC(uint8_t r, uint8_t c, uint8_t level)
   if (!old && level)        act_add(idx);
   else if (old && !level)   act_remove(idx);
   // else: brightness changed but remains active; leave position stable
+}
+
+void led_set_pixel(uint8_t r, uint8_t c, uint8_t level) {
+    Display_SetPixelRC(r, c, level);
 }
 
 void Display_SetRegion(uint8_t r0, uint8_t c0, uint8_t w, uint8_t h, uint8_t level)

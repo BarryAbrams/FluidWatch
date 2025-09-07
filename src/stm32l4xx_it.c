@@ -56,6 +56,8 @@
 
 /* External variables --------------------------------------------------------*/
 extern TIM_HandleTypeDef htim2;
+extern TIM_HandleTypeDef htim6;
+extern TIM_HandleTypeDef htim7;
 /* USER CODE BEGIN EV */
 
 /* USER CODE END EV */
@@ -240,6 +242,14 @@ void TIM2_IRQHandler(void)
   /* USER CODE END TIM2_IRQn 1 */
 }
 
+void TIM6_DAC_IRQHandler(void)
+{
+    HAL_TIM_IRQHandler(&htim6);
+}
+void TIM7_IRQHandler(void)
+{
+    HAL_TIM_IRQHandler(&htim7);
+}
 /* USER CODE BEGIN 1 */
 
 /* USER CODE END 1 */

@@ -120,19 +120,46 @@ static void render_time_once(uint8_t hours, uint8_t mins, uint8_t colon_on)
 
 
 
+static void RTC_SetToCompileTime(void) {
+    int hh, mm, ss;
+    int dd, yyyy;
+    char mmm[4];
+
+    // Parse __TIME__ ("HH:MM:SS")
+    sscanf(__TIME__, "%d:%d:%d", &hh, &mm, &ss);
+
+    // Parse __DATE__ ("Mmm dd yyyy")
+    sscanf(__DATE__, "%3s %d %d", mmm, &dd, &yyyy);
+
+    // Convert month string → number
+    int month = 0;
+    const char *months = "JanFebMarAprMayJunJulAugSepOctNovDec";
+    char *p = strstr(months, mmm);
+    if (p) month = (p - months) / 3 + 1;
+
+    // Weekday is tricky — just set to MONDAY as placeholder
+    // Or you can compute Zeller’s congruence if you want.
+    int wd = RTC_WEEKDAY_MONDAY;
+
+    // Store year as 2-digit (offset from 2000 for STM32 RTC)
+    int yy = yyyy - 2000;
+
+    RTC_SetOnce((uint8_t)yy,
+                (uint8_t)month,
+                (uint8_t)dd,
+                (uint8_t)wd,
+                (uint8_t)hh,
+                (uint8_t)mm,
+                (uint8_t)ss);
+}
 
 void Time_Init(void)
 {
     if (HAL_RTCEx_BKUPRead(&hrtc, RTC_BKP_DR0) != 0xA5A5) {
-    // Example: Thu Aug 28, 2025 14:37:00
-    RTC_SetOnce(/*yy=*/25,
-                /*mm=*/9,
-                /*dd=*/2,
-                /*wd=*/RTC_WEEKDAY_TUESDAY,
-                /*hh=*/8, /*min=*/2, /*ss=*/15);
+        RTC_SetToCompileTime();  // use compile time/date
+        HAL_RTCEx_BKUPWrite(&hrtc, RTC_BKP_DR0, 0xA5A5);
+    }
 
-    HAL_RTCEx_BKUPWrite(&hrtc, RTC_BKP_DR0, 0xA5A5);
-  }
 
   // force first render
   cur_h10 = cur_h1 = cur_m10 = cur_m1 = 0xFF;
